@@ -203,8 +203,8 @@ class compile:
 
     #################################################################
 
-    def backward(self, input: np.ndarray, targets: np.ndarray, Loss_function, batch_size: int = 8,
-                 learning_rate: float = 1e-3, shuffle: bool = True) -> None:
+    def backward(self, input: np.ndarray, targets: np.ndarray, Loss_function_or_error, batch_size: int = 8,
+                 learning_rate: float = 1e-3, shuffle: bool = False) -> None:
         """
         Perform the backpropagation step to update the model's weights.
 
@@ -245,11 +245,15 @@ class compile:
             out = self(data_X)
             
             # Calculate the error using the loss function's backward method
-            if hasattr(Loss_function, 'memory'):
-                _ = Loss_function.forward(out, data_Y)
-                error = Loss_function.backward()
+            
+            if not isinstance(Loss_function_or_error, np.ndarray):
+                if hasattr(Loss_function_or_error, 'memory'):
+                    _ = Loss_function_or_error.forward(out, data_Y)
+                    error = Loss_function_or_error.backward()
+                else:
+                    error = Loss_function_or_error.backward(out, data_Y)
             else:
-                error = Loss_function.backward(out, data_Y)
+                error = Loss_function_or_error
 
             # Perform backpropagation on each layer, starting from the last layer
             for layer in reversed(self.model):
@@ -260,8 +264,8 @@ class compile:
 
     #################################################################
 
-    def fit(self, X_train: np.ndarray, X_val: np.ndarray, Y_train: np.ndarray, Y_val: np.ndarray, Loss_function,
-            batch_size: int = 8, epoch: int = 15, method: str = 'Adam', learning_rate: float = 1e-3, **kwargs) -> dict:
+    def fit(self, X_train: np.ndarray, Y_train: np.ndarray, Loss_function_or_error, batch_size: int = 8,
+            epoch: int = 15, method: str = 'Adam', learning_rate: float = 1e-3, **kwargs) -> dict:
         """
         Train the model using the provided training and validation data.
 
@@ -269,14 +273,10 @@ class compile:
         -----------
         X_train : np.ndarray
             Training input data.
-        X_val : np.ndarray
-            Validation input data.
         Y_train : np.ndarray
             Training ground truth labels.
-        Y_val : np.ndarray
-            Validation ground truth labels.
         Loss_function : object
-            The loss function object used to compute loss and gradients.
+            The loss function object used to compute loss and gradients or a numpy array of external error.
         batch_size : int, optional
             Training batch_size
         epoch : int, optional
@@ -288,9 +288,6 @@ class compile:
         *kwargs: Additional plotting options:
             - plot_loss (bool): Whether to plot loss curves (default: True).
             - plot_fitting (bool): Whether to plot fitting for regression tasks (default: False).
-            - plot_reg (bool): Whether to plot regression results (default: False).
-            - plot_confusion (bool): Whether to plot a confusion matrix for classification tasks (default: False).
-            - classes (np.array): Data labels if you want to plot confusion at same time
             - Hyperparameters for optimizers
 
         Returns:
@@ -300,12 +297,9 @@ class compile:
         """
         # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
         self.validate_input(X_train)
-        self.validate_input(X_val)
         self.validate_final_output(Y_train)
-        self.validate_final_output(Y_val)
 
         loss_train = []
-        loss_val = []
 
         # Initialize optimizer for each layer if has not been defined yet or has changed
         if not hasattr(self, 'Optimizer'):
@@ -321,10 +315,22 @@ class compile:
 
         # Calculate loss of random model for learning rate schedulers
         out_train = self(X_train)
-        initial_loss_train = Loss_function.forward(out_train, Y_train, inference=True)
+        if not isinstance(Loss_function_or_error, np.ndarray):
+            initial_loss_train = Loss_function_or_error.forward(out_train, Y_train, inference=True)
+        else:
+            initial_loss_train = Loss_function_or_error
+            epoch = 1
 
         # Training loop over the specified number of epochs
         for current_epoch in range(epoch):
+
+            # Reset memory for correct time backpropagation through time
+            for layer in self.model:
+                try:
+                    layer.reset_memory()
+                except:
+                    pass
+
             # Learning rate strategy
             if isinstance(learning_rate, (int, float)):
                 lr = learning_rate
@@ -332,27 +338,25 @@ class compile:
                 lr = learning_rate(epoch, loss_train[-1] if loss_train else initial_loss_train)
             
             # Perform backpropagation
-            self.backward(X_train, Y_train, Loss_function,
+            self.backward(X_train, Y_train, Loss_function_or_error,
                           learning_rate=lr, batch_size=batch_size)
             
-            # Compute the output again after weight updates
-            out_train = self(X_train)
+            if not isinstance(Loss_function_or_error, np.ndarray):
+                # Compute the output again after weight updates
+                out_train = self(X_train)
 
-            # Calculate and store the training loss
-            loss_train.append(Loss_function.forward(out_train, Y_train, inference=True))
-            # Perform validation and calculate validation loss
-            out_val = self(X_val)
-            loss_val.append(Loss_function.forward(out_val, Y_val, inference=True))
+                # Calculate and store the training loss
+                loss_train.append(Loss_function_or_error.forward(out_train, Y_train, inference=True))
 
-            # Plot the training and validation loss curves
-            plot_metrics(epoch, current_epoch+1, loss_train, loss_val,
-                 Y_train, out_train, Y_val, out_val, **kwargs)
+                # Plot loss curves
+                plot_metrics(epoch, current_epoch+1, 1.0, loss_train, 
+                    Y_train.T, out_train.T, plot_perf=False, **kwargs)
 
-            # Clear the output to update the plot in real-time
-            clear_output(wait=True)
+                # Clear the output to update the plot in real-time
+                clear_output(wait=True)
 
         # Return a dictionary of training and validation losses
-        return {'loss_train': loss_train, 'loss_validation': loss_val}
+        return {'loss': loss_train}
 
     #################################################################
 
@@ -460,6 +464,13 @@ class compile:
         # Initialize an empty Jacobian matrix with shape (total outputs, total trainable parameters)
         jaccob = np.zeros((X_train.shape[0] * self.model[-1].output_size, self.trainable_params()))
 
+        # Reset memory for correct time backpropagation through time
+        for layer in self.model:
+            try:
+                layer.reset_memory()
+            except:
+                pass
+
         # Loop over each training sample
         for batch_index in range(X_train.shape[0]):
             # Loop over each output neuron
@@ -499,8 +510,8 @@ class compile:
 
     #################################################################
 
-    def levenberg_mar(self, X_train: np.ndarray, X_val: np.ndarray, Y_train: np.ndarray, Y_val: np.ndarray, Loss_function,
-                    epoch: int = 15, learning_rate: float = 0.7, gamma: float = 0.99, v: float = 0.9, **kwargs) -> dict:
+    def levenberg_mar(self, X_train: np.ndarray, Y_train: np.ndarray, Loss_function_or_error, epoch: int = 15,
+                      learning_rate: float = 0.7, gamma: float = 0.99, v: float = 0.9, **kwargs) -> dict:
         """
         Perform the Levenberg-Marquardt optimization algorithm for model training.
 
@@ -509,17 +520,11 @@ class compile:
         X_train : np.ndarray
             Training input data with shape (n_samples, input_size).
             
-        X_val : np.ndarray
-            Validation input data with shape (n_samples, input_size).
-            
         Y_train : np.ndarray
             Training output data with shape (n_samples, output_size).
             
-        Y_val : np.ndarray
-            Validation output data with shape (n_samples, output_size).
-            
         Loss_function : object
-            The loss function object that provides `forward()` and `backward()` methods.
+            The loss function object that provides `forward()` and `backward()` methods or a numpy array of external error.
             
         epoch : int, optional
             Number of training epochs. Default is 15.
@@ -544,9 +549,7 @@ class compile:
         """
         # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
         self.validate_input(X_train)
-        self.validate_input(X_val)
         self.validate_final_output(Y_train)
-        self.validate_final_output(Y_val)
 
         if type(self.model[-1].output_size) is not int:
             raise TypeError('Jaccobian calculations for the last layer is not supported, use reshaping to see what would happen')
@@ -555,13 +558,16 @@ class compile:
         for layer in self.model:
             layer.optimizer_init('SGD')
 
-        # Lists to store training and validation losses
+        # Lists to store training loss
         loss_train = []
-        loss_val = []
 
         # Calculate loss of random model for learning rate schedulers
         out_train = self(X_train)
-        initial_loss_train = Loss_function.forward(out_train, Y_train, inference=True)
+        if not isinstance(Loss_function_or_error, np.ndarray):
+            initial_loss_train = Loss_function_or_error.forward(out_train, Y_train, inference=True)
+        else:
+            initial_loss_train = Loss_function_or_error
+            epoch = 1
 
         # Training loop for the specified number of epochs
         for current_epoch in range(epoch):
@@ -580,19 +586,18 @@ class compile:
 
             # Forward pass through the model with training data
             out = self(X_train)
-            
-            # Reshape training data to match input size
-            # X_train = X_train.reshape(-1, self.model[0].input_size)
-            # Y_train = Y_train.reshape(out.shape)
 
             # Compute the error using the provided loss function
-            if hasattr(Loss_function, 'memory'):
+        if not isinstance(Loss_function_or_error, np.ndarray):
+            if hasattr(Loss_function_or_error, 'memory'):
                 error = np.zeros(Y_train.shape)
                 for ind, o in enumerate(out):
-                    _ = Loss_function.forward(o.reshape((1,-1)), Y_train[ind].reshape((1,-1)))
-                    error[ind] = Loss_function.backward()
+                    _ = Loss_function_or_error.forward(o.reshape((1,-1)), Y_train[ind].reshape((1,-1)))
+                    error[ind] = Loss_function_or_error.backward()
             else:
-                error = Loss_function.backward(out, Y_train)
+                error = Loss_function_or_error.backward(out, Y_train)
+        else:
+            error = Loss_function_or_error
 
             # Compute the Jacobian matrix for the current training data
             J = self.Jaccobian(X_train)
@@ -607,27 +612,26 @@ class compile:
                 ind2 += layer.trainable_params()
                 layer.update(new_grads[ind1:ind2].reshape((-1, 1)), lr)
 
-            # Forward pass for training data to compute training loss
-            out_train = self(X_train)
-            loss_train.append(Loss_function.forward(out_train, Y_train, inference=True))
+            if not isinstance(Loss_function_or_error, np.ndarray):
 
-            # Forward pass for validation data to compute validation loss
-            out_val = self(X_val)
-            loss_val.append(Loss_function.forward(out_val, Y_val, inference=True))
+                # Forward pass for training data to compute training loss
+                out_train = self(X_train)
+                loss_train.append(Loss_function_or_error.forward(out_train, Y_train, inference=True))
 
-            # Plot training and validation metrics for visual feedback
-            plot_metrics(epoch, current_epoch + 1, loss_train, loss_val, Y_train, out_train, Y_val, out_val, **kwargs)
+                # Plot training and validation metrics for visual feedback
+                plot_metrics(epoch, current_epoch+1, 1.0, loss_train, 
+                    Y_train.T, out_train.T, None, None, plot_perf=False, **kwargs)
 
-            # Clear output to refresh the plot in real-time
-            clear_output(wait=True)
+                # Clear output to refresh the plot in real-time
+                clear_output(wait=True)
 
         # Return the training and validation loss history as a dictionary
-        return {'loss_train': loss_train, 'loss_validation': loss_val}
+        return {'loss': loss_train}
 
     #################################################################
 
-    def EKF(self, X_train: np.ndarray, X_val: np.ndarray, Y_train: np.ndarray, Y_val: np.ndarray,
-            Loss_function, epoch: int = 15, Q: np.ndarray = None, R: np.ndarray = None, P: np.ndarray = None, 
+    def EKF(self, X_train: np.ndarray, Y_train: np.ndarray, Loss_function_or_error, epoch: int = 15,
+            Q: np.ndarray = None, R: np.ndarray = None, P: np.ndarray = None, 
             learning_rate: float = 1.0, **kwargs) -> dict:
         """
         Perform Extended Kalman Filter (EKF) optimization for training the model.
@@ -636,14 +640,10 @@ class compile:
         -----------
         X_train : np.ndarray
             Training input data of shape (n_samples, input_size).
-        X_val : np.ndarray
-            Validation input data of shape (n_samples, input_size).
         Y_train : np.ndarray
             Training target data of shape (n_samples, output_size).
-        Y_val : np.ndarray
-            Validation target data of shape (n_samples, output_size).
         Loss_function : object
-            The loss function object with `forward()` and `backward()` methods.
+            The loss function object with `forward()` and `backward()` methods or a numpy array of external error.
         epoch : int, optional
             Number of training epochs. Default is 15.
         Q : np.ndarray, optional
@@ -665,9 +665,7 @@ class compile:
         """
         # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
         self.validate_input(X_train)
-        self.validate_input(X_val)
         self.validate_final_output(Y_train)
-        self.validate_final_output(Y_val)
 
         # Initialize covariance matrices
         Q = Q * np.eye(self.trainable_params()) if Q is not None else 0.1 * np.eye(self.trainable_params())
@@ -680,7 +678,11 @@ class compile:
 
         # Calculate loss of random model for learning rate schedulers
         out_train = self(X_train)
-        initial_loss_train = Loss_function.forward(out_train, Y_train, inference=True)
+        if not isinstance(Loss_function_or_error, np.ndarray):
+            initial_loss_train = Loss_function_or_error.forward(out_train, Y_train, inference=True)
+        else:
+            initial_loss_train = Loss_function_or_error
+            epoch = 1
 
         # Ensure the optimizer for each layer is set to SGD
         for layer in self.model:
@@ -707,11 +709,14 @@ class compile:
                 out = self(data_X)
 
                 # Compute the error using the loss function
-                if hasattr(Loss_function, 'memory'):
-                    _ = Loss_function.forward(out, data_Y)
-                    error = Loss_function.backward()
+                if not isinstance(Loss_function_or_error, np.ndarray):
+                    if hasattr(Loss_function_or_error, 'memory'):
+                        _ = Loss_function_or_error.forward(out, data_Y)
+                        error = Loss_function_or_error.backward()
+                    else:
+                        error = Loss_function_or_error.backward(out, data_Y)
                 else:
-                    error = Loss_function.backward(out, data_Y)
+                    error = Loss_function_or_error
 
                 # Calculate the Jacobian matrix for the current input
                 H = self.Jaccobian(data_X).T
@@ -735,19 +740,17 @@ class compile:
                     ind2 += layer.trainable_params()
                     layer.update(new_grads[ind1:ind2].reshape((-1, 1)), lr)
 
-            # Compute the training loss for the current epoch
-            out_train = self(X_train)
-            loss_train.append(Loss_function.forward(out_train, Y_train, inference=True))
+            if not isinstance(Loss_function_or_error, np.ndarray):
+                # Compute the training loss for the current epoch
+                out_train = self(X_train)
+                loss_train.append(Loss_function_or_error.forward(out_train, Y_train, inference=True))
 
-            # Compute the validation loss for the current epoch
-            out_val = self(X_val)
-            loss_val.append(Loss_function.forward(out_val, Y_val, inference=True))
+                # Plot training and validation metrics
+                plot_metrics(epoch, current_epoch+1, 1.0, loss_train, 
+                    Y_train.T, out_train.T, None, None, plot_perf=False, **kwargs)
 
-            # Plot training and validation metrics
-            plot_metrics(epoch, current_epoch + 1, loss_train, loss_val, Y_train, out_train, Y_val, out_val, **kwargs)
-
-            # Clear the output to update the plot dynamically
-            clear_output(wait=True)
+                # Clear the output to update the plot dynamically
+                clear_output(wait=True)
 
         # Return a dictionary with training and validation loss histories
         return {'loss_train': loss_train, 'loss_validation': loss_val}
