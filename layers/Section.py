@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 #############################################################################################################################
 
-class compile:
+class NN_section:
     """
     Compile and manage the training and inference process of a neural network model.
 
@@ -49,6 +49,10 @@ class compile:
                 )
         self.batch_size = min(layer.batch_size for layer in model)
         self.model = model
+        self.input_size = model[0].input_size
+        self.output_size = model[-1].output_size
+        self.batch_size = min(layer.batch_size for layer in model)
+        self.activation = 'not defined for this'
 
     #################################################################
 
@@ -178,26 +182,26 @@ class compile:
 
     #################################################################
 
-    def validate_final_output(self, output: np.ndarray) -> None:
+    def validate_error_nn(self, error_nn: np.ndarray) -> None:
         """
-        Validates the output of the final layer to ensure it matches the expected output size and dimensions.
+        Validates the error of the final layer to ensure it matches the expected output size and dimensions.
 
         Parameters:
         -----------
-        output : np.ndarray
+        error_nn : np.ndarray
             The output array from the final layer to validate.
 
         Raises:
         -------
         ValueError:
-            If the output size does not match the expected output size of the last layer.
-            If the output dimension is less than 2.
+            If the error_nn size does not match the expected output size of the last layer.
+            If the error dimension is less than 2.
         """
         # Ensure the output has at least 2 dimensions (batch size and output size)
-        if output.ndim < 2:
+        if error_nn.ndim < 2:
             raise ValueError(
-                f"Invalid output dimensions: The final layer's output must have at least 2 dimensions, "
-                f"but got {output.ndim} dimensions. Ensure the output includes batch size and output size."
+                f"Invalid error dimensions: The final layer's error must have at least 2 dimensions, "
+                f"but got {error_nn.ndim} dimensions."
             )
 
         # Retrieve the expected output size of the last layer
@@ -205,133 +209,44 @@ class compile:
 
         # Determine the expected output shape, handling both int and tuple cases
         if isinstance(final_layer_output_size, int):
-            expected_output_shape = (final_layer_output_size,)
+            expected_error_shape = (final_layer_output_size,)
         else:
-            expected_output_shape = final_layer_output_size
+            expected_error_shape = final_layer_output_size
 
         # Validate that the provided output size matches the expected output size of the last layer
-        if output.shape[1:] != expected_output_shape:
+        if error_nn.shape[1:] != expected_error_shape:
             raise ValueError(
-                f"Final output size mismatch: Model produced output size {output.shape[1:]}, "
-                f"which does not match the expected output size {expected_output_shape} "
+                f"Last layer's error array size mismatch: Model produced error of size {error_nn.shape[1:]}, "
+                f"which does not match the expected error size {expected_error_shape} "
                 "of the final layer."
             )
 
     #################################################################
 
-    def backward(self, input: np.ndarray, targets: np.ndarray, Loss_function, batch_size: int = 8, learning_rate: float = 1e-3,
-                 modify: bool = True, return_error: bool = False, shuffle: bool = False) -> None:
+    def update(self, grads: np.ndarray, learning_rate: float = 1e-3) -> None:
         """
-        Perform the backpropagation step to update the model's weights.
+        Update the parameters of all layers using the provided gradients.
 
         Parameters:
         -----------
-        input : np.ndarray
-            Input data for the current batch.
-        targets : np.ndarray
-            The ground truth labels corresponding to the input data.
-        Loss_function : object
-            The loss function object that computes both the forward and backward pass of the loss.
-        batch_size : int, optional
-            Training batch_size
+        grads : np.ndarray
+            The gradients for all trainable parameters in the model.
         learning_rate : float, optional
-            Learning rate for updating weights (default is 1e-3).
-        modify : bool, optional
-            If you dont want to modify layers, but only want to calculate backward error, set this argument to False
-        return_error : bool, optional
-            return derivatives with respect to input for whole batch
-        shuffle : bool, optionaal
-            Shuffle data before training process
-        """
-        # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
-        self.validate_input(input)
-        self.validate_final_output(targets)
-
-        # Shuffle data if needed
-        if shuffle:
-            random_indices = np.random.permutation(input.shape[0])
-            input = input[random_indices]
-            targets = targets[random_indices]
-        # Determine how many batches are needed based on batch size
-        batch_num = int(np.ceil(input.shape[0] / batch_size))
-
-        # Derivatives with respect to netwrok input
-        if return_error:
-            error_in = np.zeros(input.shape)
-
-        # Iterate over each batch
-        for i in range(batch_num):
-            # Extract the current batch of input data and corresponding targets
-            data_X = input[i * batch_size: (i + 1) * batch_size].copy()
-            data_Y = targets[i * batch_size: (i + 1) * batch_size].copy()
-
-            # Perform forward pass to get the output
-            self.reset_memory()
-            out = self(data_X)
-            
-            # Calculate the error using the loss function's backward method
-            if hasattr(Loss_function, 'memory'):
-                _ = Loss_function.forward(out, data_Y)
-                error = Loss_function.backward()
-            else:
-                error = Loss_function.backward(out, data_Y)
-
-            # Perform backpropagation on each layer, starting from the last layer
-            for layer in reversed(self.model):
-                error = layer.backward(error, learning_rate=learning_rate, return_error=True, modify=modify)
-            
-            # accumulate error_in if necessarry
-            if return_error:
-                error_in[i * batch_size: (i + 1) * batch_size] = error_in
-            
-        # Return error propagated to possible pervious layer
-        if return_error:
-            return error_in
-
-    #################################################################
-
-    def fit(self, X_train: np.ndarray, Y_train: np.ndarray, Loss_function, batch_size: int = 8, epoch: int = 15,
-            method: str = 'Adam', learning_rate: float = 1e-3, **kwargs) -> dict:
-        """
-        Train the model using the provided training and validation data.
-
-        Parameters:
-        -----------
-        X_train : np.ndarray
-            Training input data.
-        Y_train : np.ndarray
-            Training ground truth labels.
-        Loss_function : object
-            The loss function object used to compute loss and gradients.
-        batch_size : int, optional
-            Training batch_size
-        epoch : int, optional
-            Number of epochs to train (default is 15).
-        method : str, optional
-            Optimization method (default is 'Adam').
-        learning_rate : float, optional
-            Learning rate for weight updates (default is 1e-3).   
-        *kwargs: Additional plotting options:
-            - plot_loss (bool): Whether to plot loss curves (default: True).
-            - plot_fitting (bool): Whether to plot fitting for regression tasks (default: False).
-            - plot_reg (bool): Whether to plot regression results (default: False).
-            - plot_confusion (bool): Whether to plot a confusion matrix for classification tasks (default: False).
-            - classes (np.array): Data labels if you want to plot confusion at same time
-            - Hyperparameters for optimizers
+            The learning rate for parameter updates (default is 1e-3).
 
         Returns:
         --------
-        dict:
-            Dictionary containing training loss for each epoch.
+        None
         """
-        # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
-        self.validate_input(X_train)
-        self.validate_final_output(Y_train)
-        learning_rate_schedule = not isinstance(learning_rate, (int, float))
+        ind2 = 0
+        for layer in self.model:
+            ind1 = ind2
+            ind2 += layer.trainable_params()
+            layer.update(grads=grads[ind1:ind2], learning_rate=learning_rate)
 
-        # Initialize a list to accumulate loss during training model
-        loss_train = []
+    #################################################################
 
+    def optimizer_init(self, method='Adam', **kwargs):
         # Initialize optimizer for each layer if has not been defined yet or has changed
         if not hasattr(self, 'Optimizer'):
             self.Optimizer = method
@@ -341,46 +256,90 @@ class compile:
             for layer in self.model:
                 layer.optimizer_init(optimizer=method, **kwargs)
 
-        # Calculate loss of random model for learning rate schedulers
-        if learning_rate_schedule:
-            # Reset memory for correct time backpropagation through time and correct loss derivatives
+    #################################################################
+
+    def backward(self, input: np.ndarray, error_nn: np.ndarray, batch_size: int = 8, modify: bool = True,
+                 learning_rate: float = 1e-3, return_error: bool = False, shuffle: bool = False,
+                 return_grads: bool = False) -> None:
+        """
+        Perform the backpropagation step to update the model's weights.
+
+        Parameters:
+        -----------
+        input : np.ndarray
+            Input data for the current batch.
+        error_nn : np.ndarray
+            Error propagated to last layer
+        batch_size : int, optional
+            Training batch_size
+        modify : bool
+            If false, model would not been update
+        learning_rate : float, optional
+            Learning rate for updating weights (default is 1e-3).
+        modify : bool, optional
+            If you dont want to modify layers, but only want to calculate backward error, set this argument to False
+        return_error : bool, optional
+            return derivatives with respect to input for whole batch
+        shuffle : bool, optionaal
+            Shuffle data before training process
+        return_grads : bool
+            return gradients with respect to parameters
+        """
+        # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
+        self.validate_input(input)
+        self.validate_error_nn(error_nn)
+
+        # Shuffle data if needed
+        if shuffle:
+            random_indices = np.random.permutation(input.shape[0])
+            input = input[random_indices]
+            error_nn = error_nn[random_indices]
+        # Determine how many batches are needed based on batch size
+        batch_num = int(np.ceil(input.shape[0] / batch_size))
+
+        # Derivatives with respect to netwrok input
+        if return_error:
+            error_in = np.zeros(input.shape)
+
+        grads = np.zeros((self.trainable_params(), 1))
+
+        # Iterate over each batch
+        for i in range(batch_num):
+            # Extract the current batch of input data and corresponding targets
+            data_X = input[i * batch_size: (i + 1) * batch_size].copy()
+            error = error_nn[i * batch_size: (i + 1) * batch_size].copy()
+
+            # Perform forward pass to get the output
             self.reset_memory()
-            out_train = self(X_train)
-            initial_loss_train = Loss_function.forward(out_train, Y_train, inference=True)
+            _ = self(data_X)
 
-        # Training loop over the specified number of epochs
-        for current_epoch in range(epoch):
-
-            # Reset memory for correct time backpropagation through time and correct loss derivatives
-            self.reset_memory()
-            compile.reset_Loss_function(Loss_function)
-
-            # Learning rate strategy
-            if learning_rate_schedule:
-                lr = learning_rate(epoch, loss_train[-1] if loss_train else initial_loss_train)
-            else:
-                lr = learning_rate
+            # Perform backpropagation on each layer, starting from the last layer
+            batch_grad = np.array([]).reshape((-1,1))
+            for layer in reversed(self.model):
+                # print(layer.input.shape)
+                x = layer.backward(error, learning_rate=learning_rate, return_error=True, modify=False, return_grads=True)
+                error = x['error_in']
+                grad = x['gradients']
+                if grad is not None:
+                    batch_grad = np.concatenate((grad, batch_grad), axis=0)
+            grads += batch_grad * batch_size
             
-            # Perform backpropagation
-            _ = self.backward(X_train, Y_train, Loss_function, learning_rate=lr, batch_size=batch_size,
-                          modify=True, shuffle=kwargs.get('shuffle', False))
-
-            # Compute the output again after weight updates
-            self.reset_memory()
-            out_train = self(X_train)
-
-            # Calculate and store the training loss
-            loss_train.append(Loss_function.forward(out_train, Y_train, inference=True))
-
-            # Plot the training loss curves
-            plot_metrics(epoch, current_epoch + 1,
-                         loss_train, Y_train, out_train, **kwargs)
-
-            # Clear the output to update the plot in real-time
-            clear_output(wait=True)
-
-        # Return a dictionary of training and validation losses
-        return {'loss_train': loss_train}
+            # accumulate error_in if necessarry
+            if return_error:
+                error_in[i * batch_size: (i + 1) * batch_size] = error_in
+        
+        if modify:
+            self.update(grads, learning_rate=learning_rate)
+            
+        # Return error propagated to possible pervious layer
+        if return_error and not return_grads:
+            return error_in
+        if return_error and return_grads:
+            return {'error_in': error_in, 'gradients': grads}
+        if return_grads:
+            return grads
+        else:
+            return None
 
     #################################################################
 
@@ -527,8 +486,8 @@ class compile:
 
     #################################################################
 
-    def levenberg_mar(self, X_train: np.ndarray, Y_train: np.ndarray, Loss_function, epoch: int = 15,
-                      learning_rate: float = 0.7, gamma: float = 0.99, v: float = 0.9, **kwargs) -> dict:
+    def levenberg_mar(self, X_train: np.ndarray, error_nn: np.ndarray,
+                      learning_rate: float = 0.7, gamma: float = 0.99) -> dict:
         """
         Perform the Levenberg-Marquardt optimization algorithm for model training.
 
@@ -537,14 +496,8 @@ class compile:
         X_train : np.ndarray
             Training input data with shape (n_samples, input_size).
             
-        Y_train : np.ndarray
-            Training output data with shape (n_samples, output_size).
-            
-        Loss_function : object
-            The loss function object that provides `forward()` and `backward()` methods.
-            
-        epoch : int, optional
-            Number of training epochs. Default is 15.
+        error_nn : np.ndarray
+            Error propagated to last layer
             
         learning_rate : float, optional
             The learning rate for weight updates. Default is 0.7.
@@ -552,222 +505,79 @@ class compile:
         gamma : float, optional
             The damping parameter for the Levenberg-Marquardt algorithm. Default is 0.8.
             
-        v : float, optional
-            The adjustment factor for `gamma`. Default is 0.9.
-            
         **kwargs : dict
             Additional keyword arguments for plotting or other purposes.
-
-        Returns:
-        --------
-        dict
-            A dictionary containing training loss history:
-            {'loss_train': list}
         """
         if type(self.model[-1].output_size) is not int:
             raise TypeError('Jaccobian calculations for the last layer is not supported, use reshaping to see what would happen')
         
         # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
         self.validate_input(X_train)
-        self.validate_final_output(Y_train)
-        learning_rate_schedule = not isinstance(learning_rate, (int, float))
+        self.validate_error_nn(error_nn)
         
         # Initialize each layer's optimizer to SGD to avoid momentum effects (e.g., Adam)
         for layer in self.model:
             layer.optimizer_init('SGD')
 
-        # Lists to store training losses
-        loss_train = []
+        # Compute the Jacobian matrix for the current training data
+        self.reset_memory()
+        J = self.Jaccobian(X_train)
 
-        # Calculate loss of random model for learning rate schedulers
-        if learning_rate_schedule:
-            # Reset memory for correct time backpropagation through time and correct loss derivatives
-            self.reset_memory()
-            out_train = self(X_train)
-            initial_loss_train = Loss_function.forward(out_train, Y_train, inference=True)
+        # Compute the gradient update using the Levenberg-Marquardt formula
+        new_grads = np.linalg.inv((J.T @ J + gamma * np.eye(self.trainable_params()))) @ J.T @ error_nn.reshape((-1, 1))
 
-        # Training loop for the specified number of epochs
-        for current_epoch in range(epoch):
-
-            # Reset memory for correct time backpropagation through time and correct loss derivatives
-            self.reset_memory()
-            compile.reset_Loss_function(Loss_function)
-
-            # Learning rate strategy
-            if learning_rate_schedule:
-                lr = learning_rate(epoch, loss_train[-1] if loss_train else initial_loss_train)
-            else:
-                lr = learning_rate
-
-            # Adjust the damping parameter `gamma` based on recent training loss
-            if current_epoch >= 2:
-                if loss_train[-1] >= loss_train[-2]:
-                    gamma /= v
-                else:
-                    gamma *= v
-
-            # Forward pass through the model with training data
-            out = self(X_train)
-
-            # Compute the error using the provided loss function
-            if hasattr(Loss_function, 'memory'):
-                error = np.zeros(Y_train.shape)
-                for ind, o in enumerate(out):
-                    _ = Loss_function.forward(o.reshape((1,-1)), Y_train[ind].reshape((1,-1)))
-                    error[ind] = Loss_function.backward()
-            else:
-                error = Loss_function.backward(out, Y_train)
-
-            # Compute the Jacobian matrix for the current training data
-            J = self.Jaccobian(X_train)
-
-            # Compute the gradient update using the Levenberg-Marquardt formula
-            new_grads = np.linalg.inv((J.T @ J + gamma * np.eye(self.trainable_params()))) @ J.T @ error.reshape((-1, 1))
-
-            # Update model weights using the computed gradients
-            ind2 = 0
-            for layer in self.model:
-                ind1 = ind2
-                ind2 += layer.trainable_params()
-                layer.update(new_grads[ind1:ind2].reshape((-1, 1)), lr)
-
-            # Forward pass for training data to compute training loss
-            self.reset_memory()
-            out_train = self(X_train)
-            loss_train.append(Loss_function.forward(out_train, Y_train, inference=True))
-
-            # Plot training and validation metrics for visual feedback
-            plot_metrics(epoch, current_epoch + 1, loss_train, Y_train, out_train, **kwargs)
-
-            # Clear output to refresh the plot in real-time
-            clear_output(wait=True)
-
-        # Return the training and validation loss history as a dictionary
-        return {'loss_train': loss_train}
+        # Update model weights using the computed gradients
+        ind2 = 0
+        for layer in self.model:
+            ind1 = ind2
+            ind2 += layer.trainable_params()
+            layer.update(new_grads[ind1:ind2].reshape((-1, 1)), learning_rate)
 
     #################################################################
 
-    def EKF(self, X_train: np.ndarray, Y_train: np.ndarray, Loss_function, epoch: int = 15,
-            Q: np.ndarray = None, R: np.ndarray = None, P: np.ndarray = None, 
-            learning_rate: float = 1.0, **kwargs) -> dict:
+    def gauss_newton(self, X_train: np.ndarray, error_nn: np.ndarray,
+                      learning_rate: float = 0.7) -> dict:
         """
-        Perform Extended Kalman Filter (EKF) optimization for training the model.
+        Perform the Gauss-Newton optimization algorithm for model training.
 
         Parameters:
         -----------
         X_train : np.ndarray
-            Training input data of shape (n_samples, input_size).
-        Y_train : np.ndarray
-            Training target data of shape (n_samples, output_size).
-        Loss_function : object
-            The loss function object with `forward()` and `backward()` methods.
-        epoch : int, optional
-            Number of training epochs. Default is 15.
-        Q : np.ndarray, optional
-            Process noise covariance matrix. If None, a default diagonal matrix is used.
-        R : np.ndarray, optional
-            Measurement noise covariance matrix. If None, a default diagonal matrix is used.
-        P : np.ndarray, optional
-            Error covariance matrix. If None, a default diagonal matrix is used.
+            Training input data with shape (n_samples, input_size).
+            
+        error_nn : np.ndarray
+            Error propagated to last layer
+            
         learning_rate : float, optional
-            The learning rate for parameter updates. Default is 1.0.
+            The learning rate for weight updates. Default is 0.7.
+            
         **kwargs : dict
-            Additional keyword arguments for visualization or other functionalities.
-
-        Returns:
-        --------
-        dict
-            Dictionary containing training loss history:
-            {'loss_train': list}.
+            Additional keyword arguments for plotting or other purposes.
         """
+        if type(self.model[-1].output_size) is not int:
+            raise TypeError('Jaccobian calculations for the last layer is not supported, use reshaping to see what would happen')
+        
         # Validate input size: Ensure input size matches the first layer's input size (ignoring batch size)
         self.validate_input(X_train)
-        self.validate_final_output(Y_train)
-        learning_rate_schedule = not isinstance(learning_rate, (int, float))
-
-        # Initialize covariance matrices
-        Q = Q * np.eye(self.trainable_params()) if Q is not None else 0.1 * np.eye(self.trainable_params())
-        R = R * np.eye(self.model[-1].output_size) if R is not None else 0.001 * np.eye(self.model[-1].output_size)
-        P = P * np.eye(self.trainable_params()) if P is not None else 0.01 * np.eye(self.trainable_params())
-
-        # Initialize lists to store training and validation losses
-        loss_train = []
-
-        # Calculate loss of random model for learning rate schedulers
-        if learning_rate_schedule:
-            # Reset memory for correct time backpropagation through time and correct loss derivatives
-            self.reset_memory()
-            out_train = self(X_train)
-            initial_loss_train = Loss_function.forward(out_train, Y_train, inference=True)
-
-        # Ensure the optimizer for each layer is set to SGD
+        self.validate_error_nn(error_nn)
+        
+        # Initialize each layer's optimizer to SGD to avoid momentum effects (e.g., Adam)
         for layer in self.model:
             layer.optimizer_init('SGD')
 
-        # Get the number of training samples
-        n_samples = X_train.shape[0]
+        # Compute the Jacobian matrix for the current training data
+        self.reset_memory()
+        J = self.Jaccobian(X_train)
 
-        # Loop through each training epoch
-        for current_epoch in range(epoch):
+        # Compute the gradient update using the Levenberg-Marquardt formula
+        try:
+            new_grads = np.linalg.inv(J.T @ J) @ J.T @ error_nn.reshape((-1, 1))
+        except:
+            new_grads = np.linalg.inv(J.T @ J + 0.1 * np.eye(self.trainable_params())) @ J.T @ error_nn.reshape((-1, 1))
 
-            # Learning rate strategy
-            if learning_rate_schedule:
-                lr = learning_rate(epoch, loss_train[-1] if loss_train else initial_loss_train)
-            else:
-                lr = learning_rate
-
-            # Reset memory for correct time backpropagation through time and correct loss derivatives
-            self.reset_memory()
-            compile.reset_Loss_function(Loss_function)
-
-            # Iterate through each sample in the training data
-            for i in range(n_samples):
-                # Extract the current input and target sample
-                data_X = X_train[i:i + 1].copy()  # Shape preservation for single sample
-                data_Y = Y_train[i:i + 1].copy()
-
-                # Perform a forward pass through the model
-                out = self(data_X)
-
-                # Compute the error using the loss function
-                if hasattr(Loss_function, 'memory'):
-                    _ = Loss_function.forward(out, data_Y)
-                    error = Loss_function.backward()
-                else:
-                    error = Loss_function.backward(out, data_Y)
-
-                # Calculate the Jacobian matrix for the current input
-                H = self.Jaccobian(data_X).T
-
-                # Compute the normalization matrix (R + H^T * P * H)
-                A = np.linalg.inv(R + H.T @ P @ H)
-
-                # Compute the Kalman gain (K)
-                K = P @ H @ A
-
-                # Calculate gradient updates (new_grads)
-                new_grads = K @ error.T
-
-                # Update the error covariance matrix (P)
-                P -= K @ H.T @ P - Q
-
-                # Update model parameters using the calculated gradients
-                ind2 = 0
-                for layer in self.model:
-                    ind1 = ind2
-                    ind2 += layer.trainable_params()
-                    layer.update(new_grads[ind1:ind2].reshape((-1, 1)), lr)
-
-            # Compute the training loss for the current epoch
-            self.reset_memory()
-            out_train = self(X_train)
-            loss_train.append(Loss_function.forward(out_train, Y_train, inference=True))
-
-            # Plot training and validation metrics
-            plot_metrics(epoch, current_epoch + 1, loss_train, Y_train, out_train, **kwargs)
-
-            # Clear the output to update the plot dynamically
-            clear_output(wait=True)
-
-        # Return a dictionary with training and validation loss histories
-        return {'loss_train': loss_train}
+        # Update model weights using the computed gradients
+        ind2 = 0
+        for layer in self.model:
+            ind1 = ind2
+            ind2 += layer.trainable_params()
+            layer.update(new_grads[ind1:ind2].reshape((-1, 1)), learning_rate)

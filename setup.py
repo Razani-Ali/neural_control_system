@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="neural_from_scratch",
-    version="1.0.0",
+    name="neural_control_system",
+    version="2.0.0",
     packages=find_packages(include=["sources", "sources.*", "utils", "utils.*"]),
     install_requires=[
         "scikit-learn==1.4.2",
@@ -15,10 +15,10 @@ setup(
             'neural_from_scratch=main:main',  # If you want to create a command-line interface
         ],
     },
-    description="A neural network package built from scratch",
+    description="A neural control package built from scratch",
     author="Razani-Ali",
     author_email="ali.razani2001@protonmail.com",
-    url="https://github.com/Razani-Ali/neural_from_scratch",
+    url="https://github.com/Razani-Ali/neural_control_system",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

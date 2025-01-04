@@ -15,3 +15,5 @@ from layers.compile import compile
 from layers.GMDH.GMDH_network import GMDH
 from layers.GMDH.GMDH_Rough import GMDHRough
 from layers.Dropout import Dropout
+from layers.Online_Section import Online_NN_section
+from layers.Section import NN_section

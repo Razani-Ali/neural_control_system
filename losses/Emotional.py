@@ -49,6 +49,10 @@ class Emotion:
         self.batch_size = batch_size # Sets data batch size
         self.memory = True # Sets an attribute to specify whether if it is memory based or not
 
+    def reset_memory(self):
+        self.r_k *= 0
+        self.last_error *= 0
+
     def forward(self, predictions: np.ndarray, labels: np.ndarray, inference: bool = False) -> float:
         """
         Performs the forward pass, calculating error and optionally returning the loss.
@@ -168,6 +172,11 @@ class Emotion2:
         self.k3 = k3  # Sets proportional constant for second-order change in error
         self.batch_size = batch_size # Sets data batch size
         self.memory = True # Sets an attribute to specify whether if it is memory based or not
+
+    def reset_memory(self):
+        self.r_k *= 0
+        self.last_error *= 0
+        self.per2_error *= 0
 
     def forward(self, predictions: np.ndarray, labels: np.ndarray, inference: bool = False) -> float:
         """

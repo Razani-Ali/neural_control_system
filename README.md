@@ -1,8 +1,10 @@
-# Neural Networks from Scratch
+# Neural Control Systems
 
-This repository contains neural network implementations written from scratch in Python and numpy.
+This repository contains neural controller implementations written from scratch in Python and numpy.
 
 ## Features
+- Online training for neural controllers
+- Simulation results in continuous time
 - Activation functions: ReLU, Sigmoid, Tanh, Elu, Leaky_ReLu, Softmax
 - Dense, RBF, and rough networks
 - Custom loss functions and weight initialization
